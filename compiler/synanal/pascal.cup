@@ -1,0 +1,819 @@
+package compiler.synanal;
+
+import java_cup.runtime.*;
+import compiler.report.*;
+import compiler.abstree.tree.*;
+
+parser code
+{:
+        public void syntax_error(Symbol cur_token) {
+            Report.warning ("Syntax error near word '" + (String)(cur_token.value) + "'.", cur_token.left, cur_token.right);
+        }
+        
+        public void report_error(String message, Object info) {
+        }
+        
+        public void report_fatal_error(String message, Object info) throws Exception {
+        	throw new Exception(message);
+        }
+              
+:}
+
+terminal String BOOL_CONST, CHAR_CONST, INT_CONST, NIL;
+terminal String IDENTIFIER;
+
+terminal BOOL, CHAR, INT;
+terminal COLON, COMMA, DOT, DOTS, LBRACKET, LPARENTHESIS, RBRACKET, RPARENTHESIS, SEMIC, AUTO, QUEST;
+terminal ADD, AND, DIV, EQU, GEQ, GTH, LEQ, LTH, MEM, MUL, NEQ, NOT, OR, PTR, SUB, UADD, USUB, VAL;
+terminal ARRAY, ASSIGN, BEGIN, CONST, DO, ELSE, END, FOR, FUNCTION, IF, OF, PROCEDURE, PROGRAM, RECORD, THEN, TO, TYPE, VAR, WHILE;
+
+non terminal empty;
+
+non terminal AbsProgram  source;
+non terminal AbsDeclName program;
+
+non terminal AbsDecls declarations, constants, types, vars, subprograms;
+non terminal AbsDecls const_list, types_list, vars_list, subprograms_list;
+non terminal AbsDecl  constant, type, var, subprogram;
+
+non terminal AbsDecl  procedure, function;
+non terminal AbsDecls parameters, parameters_list;
+non terminal AbsDecl  parameter;
+
+non terminal AbsTypeExpr type_expression;
+non terminal AbsDecls	 components_list; 
+non terminal AbsDecl     component;
+
+non terminal AbsValExpr	 value_expression;
+non terminal AbsValExprs arguments, arguments_list;
+non terminal AbsValExpr  argument;
+
+non terminal AbsStmt  statement;
+non terminal AbsStmts statements, block;
+
+precedence left OR;
+precedence left AND;
+precedence nonassoc EQU, NEQ, LTH, GTH, LEQ, GEQ;
+precedence left ADD, SUB;
+precedence left MUL, DIV;
+precedence nonassoc NOT;
+precedence nonassoc VAL;
+precedence nonassoc UADD, USUB, MEM;
+precedence nonassoc PTR;
+precedence left DOT, LBRACKET;
+ 
+
+start with source;
+
+empty ::= ;
+
+source ::= program:p declarations:d block:bl DOT:dot
+		{:
+			AbsBlockStmt block = new AbsBlockStmt(bl);
+			block.setPos(bl);
+			RESULT = new AbsProgram(p,d, block);
+			RESULT.setBeg("program",pleft, pright);
+			RESULT.setEnd(".",dotleft, dotright);
+		:};
+
+/** Program **
+Program je sestavljen iz navedbe programa, deklaracij konstant, tipov, spremenljivk in podprogramov ter sestavljenega stavka in pike.
+Vsaka skupina deklaracij je lahko izpuščena. Navedba programa je sestavljena iz ključne besede program, imena in podpičja.
+**/
+
+program ::= 	PROGRAM:pr IDENTIFIER:id SEMIC:se
+		{:
+			AbsDeclName name = new AbsDeclName(id);
+			name.setPos(id, idleft, idright);
+			RESULT = name; 
+			RESULT.setBeg("program",prleft, prright);
+			RESULT.setEnd(";",seleft, seright);
+
+		:};
+
+declarations ::= 	constants:c types:t vars:v subprograms:p
+		{:
+			AbsDecls list = new AbsDecls();
+	        list.decls.addAll(c.decls); list.decls.addAll(t.decls);
+            list.decls.addAll(v.decls); list.decls.addAll(p.decls);
+	        RESULT = list; RESULT.setBeg(c); RESULT.setEnd(p);
+		:};
+
+
+/** Deklaracije konstant **
+Deklaracije konstant so sestavljene iz ključne besede const in nepraznega zaporedja deklaracij posameznih konstant.
+Deklaracija posamezne konstante je sestavljena iz imena, enačaja, izraza za opis vrednosti in podpičja.
+**/
+
+constants ::=	 CONST:ct const_list:c
+		{:
+				RESULT = c;
+				RESULT.setBeg("const", ctleft, ctright);
+				RESULT.setEnd(c);
+		:} 
+				| empty:e
+		{:
+				RESULT = new AbsDecls();
+				RESULT.setPos("",eleft, eright);
+		:};
+
+const_list ::=	constant:c
+		{:
+				AbsDecls cl = new AbsDecls();
+				cl.decls.add(c);
+				RESULT = cl;
+				cl.setPos(c);
+		:}
+				| const_list:cl constant:c
+		{:
+				cl.decls.add(c);
+				RESULT = cl;
+				cl.setEnd(c);
+		:};
+
+constant ::=	IDENTIFIER:id EQU value_expression:ve SEMIC:se
+		{:
+			AbsDeclName dec = new AbsDeclName(id);
+			dec.setPos(id, idleft, idright);
+			RESULT = new AbsConstDecl(dec, ve);
+			RESULT.setBeg(id, idleft, idright);
+			RESULT.setEnd(";", seleft, seright);
+		:};
+
+/** Deklaracije tipov **
+Deklaracije tipov so sestavljene iz ključne besede type in nepraznega zaporedja deklaracij posameznih tipov.
+Deklaracija posameznega tipa je sestavljena iz imena, enačaja, opisa tipa in podpičja.
+**/
+
+types ::= 		TYPE:tp types_list:tl
+		{:
+			RESULT = tl;
+			RESULT.setBeg("type", tpleft, tpright);
+			RESULT.setEnd(tl);
+		:}
+				| empty:e
+		{:
+			RESULT = new AbsDecls();
+			RESULT.setPos("",eleft, eright);
+		:};
+
+types_list ::=	type:t
+		{:
+			AbsDecls tl = new AbsDecls();
+			tl.decls.add(t);
+			RESULT = tl;
+			tl.setPos(t);
+		:}
+				| types_list:tl type:t
+		{:
+			tl.decls.add(t);
+			RESULT = tl;
+			tl.setEnd(t);
+		:};
+
+type ::=	IDENTIFIER:id EQU type_expression:tex SEMIC:se
+		{:
+			AbsDeclName dcn = new AbsDeclName(id);
+			dcn.setPos(id, idleft, idright);
+			RESULT = new AbsTypeDecl(dcn, tex);
+			RESULT.setBeg(id, idleft, idright);
+			RESULT.setEnd(";",seleft, seright);
+		:};
+
+
+/** Deklaracije spremenljivk **
+Deklaracije spremenljivk so sestavljene iz ključne besede var in nepraznega zaporedja deklaracij posameznih spremenljivk.
+Deklaracija posamezne spremenljvke je sestavljena iz imena, dvopičja, opisa tipa in podpičja.
+**/
+
+
+vars ::=		VAR:va vars_list:vl
+		{:
+				RESULT = vl;
+				RESULT.setBeg("var", valeft, varight);
+				RESULT.setEnd(vl);
+		:}
+				| empty:e
+		{:
+				AbsDecls dec = new AbsDecls();
+				dec.setPos("", eleft, eright);
+				RESULT = dec;
+		:};
+
+vars_list ::=	var:v
+		{:
+				AbsDecls vl = new AbsDecls();
+				vl.decls.add(v);
+				RESULT = vl;
+				vl.setPos(v);
+		:}
+				| vars_list:vl var:v
+
+		{:
+				vl.decls.add(v);
+				RESULT = vl;
+				vl.setEnd(v);
+		:};
+
+var ::= 		IDENTIFIER:id COLON type_expression:tex SEMIC:se
+		{:
+			AbsDeclName name = new AbsDeclName(id);
+			name.setPos(id, idleft, idright);
+			AbsVarDecl ddd = new AbsVarDecl(name, tex);
+			RESULT = ddd;
+			RESULT.setBeg(id, idleft, idright);
+			RESULT.setEnd(";", seleft, seright);
+			compiler.synanal.VariableTable.PutVariable(id, ddd);
+		:};
+		
+var ::=  		IDENTIFIER:id COLON AUTO LPARENTHESIS IDENTIFIER:id3 RPARENTHESIS SEMIC:se
+		{:
+			AbsDeclName name = new AbsDeclName(id);
+			name.setPos(id, idleft, idright);
+			RESULT = new AbsVarDecl(name, compiler.synanal.VariableTable.GetVar(id3), true);
+			RESULT.setBeg(id, idleft, idright);
+			RESULT.setEnd(";", seleft, seright);
+		:};
+
+
+subprograms ::=	subprograms_list:p              
+		{:
+			RESULT = p; 
+		:} 
+           		| empty:e                         
+        {: 
+        	RESULT = new AbsDecls(); 
+        	RESULT.setPos("", eleft, eright); 
+        :};
+
+
+subprograms_list ::= 	subprogram:p                    	
+		{: 	AbsDecls l = new AbsDecls(); 
+			l.decls.add(p); 
+			RESULT = l; 
+			l.setPos(p); 
+		:}
+           				| subprograms_list:l subprogram:p 
+       	{: 
+       		l.decls.add(p); 
+       		RESULT = l; 
+       		l.setEnd(p); 
+       	:};
+
+
+subprogram ::= 	procedure:p                     
+		{: 
+			RESULT = p; 
+		:}
+                | function:f 
+		{: 
+			RESULT = f; 
+		:};
+
+/** Deklaracije procedur **
+Deklaracija procedure je sestavljena iz glave procedure, deklaracij konstant, tipov, spremenljivk in podprogramov
+ter sestavljenega stavka in podpičja. Vsaka skupina deklaracij je lahko izpuščena. Glava procedure je sestavljena iz 
+ključne besede procedure, imena, opisa parametrov in podpičja.
+**/
+
+procedure ::= PROCEDURE:pr IDENTIFIER:id parameters:p SEMIC declarations:d block:b SEMIC:s
+      	{: 	AbsDeclName name = new AbsDeclName(id); 
+      		name.setPos(id, idleft, idright);
+            AbsBlockStmt block = new AbsBlockStmt(b); 
+            block.setPos(b);
+            RESULT = new AbsProcDecl(name, p, d, block); 
+            RESULT.setBeg("procedure", prleft, prright); 
+            RESULT.setEnd(";", sleft, sright);
+        :};
+
+/** Deklaracije funkcij **
+Deklaracija funkcije je sestavljena iz glave funkcije, deklaracij konstant, tipov, spremenljivk in podprogramov ter sestavljenega stavka
+in podpičja. Vsaka skupina deklaracij je lahko izpuščena. Glava funkcije je sestavljena iz ključne besede function, imena,
+opisa parametrov, dvopičja, opisa tipa funkcije in podpičja.
+**/
+
+function ::= FUNCTION:f IDENTIFIER:id parameters:p COLON type_expression:t SEMIC declarations:d block:b SEMIC:s
+       	{: 	AbsDeclName name = new AbsDeclName(id); 
+       		name.setPos(id, idleft, idright);
+            AbsBlockStmt block = new AbsBlockStmt(b); 
+            block.setPos(b);
+            RESULT = new AbsFunDecl(name, p, t, d, block); 
+            RESULT.setBeg("function", fleft, fright); 
+            RESULT.setEnd(";", sleft, sright); 
+        :};
+
+/** Opisi parametrov **
+Opis parametrov je sestavljen iz oklepaja, seznama opisov posameznih parametrov, ki so med seboj ločeni s podpičji, in zaklepaja.
+Opis posameznega parametra je sestavljen iz imena, dvopičja in opisa tipa parametra.
+Seznam opisov posameznih parametrov je lahko prazen.
+**/
+
+parameters ::= 	LPARENTHESIS:l RPARENTHESIS                     
+		{: 	RESULT = new AbsDecls(); 
+			RESULT.setPos("()", lleft, lright); 
+		:}
+                | LPARENTHESIS:l parameters_list:p RPARENTHESIS:r 
+        {: 	RESULT = p; RESULT.setBeg("(", lleft, lright); 
+        	RESULT.setEnd(")", rleft, rright); 
+        :};
+
+parameters_list ::= parameter:p                                     
+		{: 	AbsDecls l = new AbsDecls(); 
+			l.decls.add(p); 
+			RESULT = l; 
+			l.setPos(p); 
+		:}
+                  	| parameters_list:l SEMIC parameter:p             
+       	{: 	l.decls.add(p); 
+       		RESULT = l; 
+       		l.setEnd(p); 
+       	:};
+
+parameter ::= 	IDENTIFIER:id COLON type_expression:t
+		{: 	AbsDeclName name = new AbsDeclName(id); 
+			name.setPos(id, idleft, idright);
+			RESULT = new AbsVarDecl(name, t); 
+			RESULT.setBeg(name); 
+			RESULT.setEnd(t); 
+		:};
+
+
+/**-------------------------TIPI-----------------------------------------------*/
+/** Izrazi za opis tipov **
+Ime atomarnega tipa je izraz za opis tipa. 
+Ime je izraz za opis tipa.
+**/
+
+type_expression ::=	BOOL:bl
+		{:
+			RESULT = new AbsAtomType(AbsAtomType.BOOL);
+			RESULT.setPos("bool", blleft, blright);
+		:}
+					| CHAR:ch
+		{:
+			RESULT = new AbsAtomType(AbsAtomType.CHAR);
+			RESULT.setPos("char",chleft, chright);
+		:}
+					| INT:in
+		{:
+			RESULT = new AbsAtomType(AbsAtomType.INT);
+			RESULT.setPos("int",inleft, inright);
+		:}
+					| IDENTIFIER:id
+		{:
+			RESULT = new AbsTypeName(id);
+			RESULT.setPos(id, idleft, idright);
+		:};
+
+
+/** Opis tipa tabele **
+Izraz, ki ga sestavljajo ključna beseda array, oglati oklepaj, izraza za opis vrednosti,
+med katerima je simbol .., oglati zaklepaj, ključna beseda of in izraz za opis tipov, je izraz za opis tipov.
+**/
+
+type_expression ::=	ARRAY:ar LBRACKET:lb value_expression:ex1 DOTS:dts value_expression:ex2 RBRACKET OF type_expression:tex
+		{:
+			RESULT = new AbsArrayType(tex, ex1, ex2);
+			RESULT.setBeg("array", arleft, arright);
+			RESULT.setEnd(tex);
+		:};
+
+
+/** Opis tipa zapisa **
+Izraz, ki ga sestavljajo ključna beseda record, neprazen seznam opisov komponent, ki so med seboj ločene s podpičji,
+in ključna beseda end, je izraz za opis tipov. Opis komponente je sestavljen iz imena, dvopičja in opisa tipa komponente.
+**/
+
+type_expression ::=	RECORD:re components_list:cl END:en
+		{:
+			RESULT = new AbsRecordType(cl);
+			RESULT.setBeg("record", releft, reright);
+			RESULT.setEnd("end",enleft, enright);
+		:};
+
+components_list ::=	component:co 
+		{:
+			AbsDecls cl = new AbsDecls();
+			cl.decls.add(co);
+			RESULT = cl;
+			RESULT.setPos(co);
+		:}
+					| components_list:cl SEMIC component:co
+		{:
+			cl.decls.add(co);
+			RESULT = cl;
+			RESULT.setEnd(co);
+		:};
+
+component ::=		IDENTIFIER:id COLON type_expression:tex
+		{:
+			AbsDeclName adn = new AbsDeclName(id);
+			adn.setPos(id, idleft, idright);
+			RESULT = new AbsVarDecl(adn, tex);
+			RESULT.setBeg(adn);
+			RESULT.setEnd(tex);
+
+		:};
+
+
+/** Opis tipa kazalca **
+Izraz, ki ga sestavljata simbol ^ in izraz za opis tipov, je izraz za opis tipov.
+**/
+
+type_expression ::=	PTR type_expression:tex
+		{:
+			RESULT = new AbsPointerType(tex);
+			RESULT.setPos(tex);
+		:};
+
+/* Izraz za opis tipov, ki je obdan z oklepajem in zaklepanjem, je izraz za opis tipov*/
+
+type_expression ::= LPARENTHESIS type_expression:tex RPARENTHESIS
+		{:
+			RESULT = tex;
+		:};
+
+
+
+/**-------------------------OPIS VREDNOSTI-------------------------------------------*/
+/** Izrazi za opis vrednosti **
+Konstante atomarnih podatkovnih tipov in ključna beseda nil so izrazi za opis vrednosti.
+Izraz, ki ga sestavljata prefiksni operator (^, +, -, not) in izraz za opis vrednosti, je izraz za opis vrednosti.
+Izraz, ki ga sestavljata postfiksni operator (^) in izraz za opis vrednosti, je izraz za opis vrednosti.
+**/
+
+value_expression ::= BOOL_CONST:bl 
+		{:
+			RESULT = new AbsAtomConst(bl, AbsAtomConst.BOOL);
+			RESULT.setPos(bl, blleft, blright);
+		:}
+					| CHAR_CONST:cc
+		{:
+			RESULT = new AbsAtomConst(cc, AbsAtomConst.CHAR);
+			RESULT.setPos(cc, ccleft, ccright);
+		:}
+					| INT_CONST:ic
+		{:
+			RESULT = new AbsAtomConst(ic, AbsAtomConst.INT);
+			RESULT.setPos(ic, icleft, icright);
+		:}
+					| NIL:nl
+		{:
+			RESULT = new AbsNilConst();
+			RESULT.setPos(nl, nlleft, nlright);
+		:}
+/* Izraz, ki ga sestavljata prefiksni operator (^, +, -, not) in izraz za opis vrednosti, je izraz za opis vrednosti. */
+
+					| PTR:ptr value_expression:ve
+		{:
+			RESULT = new AbsUnExpr(AbsUnExpr.MEM, ve);
+			RESULT.setBeg("ptr", ptrleft, ptrright);
+			RESULT.setEnd(ve);
+		:} %prec MEM
+					| ADD:ad value_expression:ve
+		{:
+			RESULT = new AbsUnExpr(AbsUnExpr.ADD, ve);
+			RESULT.setBeg("add", adleft, adright);
+			RESULT.setEnd(ve);
+		:} %prec UADD
+					| SUB:su value_expression:ve
+		{:
+			RESULT = new AbsUnExpr(AbsUnExpr.SUB, ve);
+			RESULT.setBeg("sub", suleft, suright);
+			RESULT.setEnd(ve);
+		:} %prec USUB
+					| NOT:no value_expression:ve
+		{:
+			RESULT = new AbsUnExpr(AbsUnExpr.NOT, ve);
+			RESULT.setBeg("not",noleft, noright);
+			RESULT.setEnd(ve);
+		:}
+
+
+/* Izraz, ki ga sestavljata postfiksni operator (^) in izraz za opis vrednosti, je izraz za opis vrednosti. */
+
+					| value_expression:ve PTR:ptr
+		{:
+			RESULT = new AbsUnExpr(AbsUnExpr.VAL, ve);
+			RESULT.setBeg(ve);
+			RESULT.setEnd("ptr",ptrleft, ptrright);
+		:} %prec VAL;
+
+
+/**
+Izraz, ki ga sestavljata dva izraza za opis vrednosti, ki sta ločena z infiksnim operatorjem
+(*, div, +, -, =, <>, <, >, <=, >=, and, or), je izraz za opis vrednosti.
+**/
+
+value_expression ::= value_expression:ex1 MUL value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.MUL, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 DIV value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.DIV, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 ADD value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.ADD, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 SUB value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.SUB, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 EQU value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.EQU, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 NEQ value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.NEQ, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}			
+					| value_expression:ex1 LTH value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.LTH, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 GTH value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.GTH, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 LEQ value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.LEQ, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 GEQ value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.GEQ, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 AND value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.AND, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:}
+					| value_expression:ex1 OR value_expression:ex2
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.OR, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:};
+
+
+
+/** Ime spremenljivke **
+Ime je izraz za opis vrednosti.
+**/
+
+value_expression ::= IDENTIFIER:id
+		{:
+			RESULT = new AbsValName(id);
+			RESULT.setPos(id, idleft, idright);
+		:};
+
+
+
+/** Dostop do elementa tabele **
+Izraz, ki ga sestavljajo izraz za opis vrednosti, oglati oklepaj, izraz za opis vrednosti in oglati zaklepaj,
+je izraz za opis vrednosti.
+**/
+
+value_expression ::= value_expression:ex1 LBRACKET value_expression:ex2 RBRACKET:rbr
+		{:
+			RESULT = new AbsBinExpr(AbsBinExpr.ARRACCESS, ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd("]", rbrleft, rbrright);
+		:};
+
+
+
+/** Dostop do elementa zapisa **
+Izraz, ki ga sestavljajo izraz za opis vrednosti, pika in ime, je izraz za opis vrednosti.
+**/
+
+value_expression ::= value_expression:ve DOT IDENTIFIER:id
+		{:
+			AbsValName name = new AbsValName(id);
+			RESULT = new AbsBinExpr(AbsBinExpr.RECACCESS, ve, name);
+			RESULT.setBeg(ve);
+			RESULT.setEnd(name);
+		:};
+
+
+
+/** Klic podprograma **
+Izraz, ki ga sestavljata ime in opis parametrov, je izraz za opis vrednosti.
+Opis parametrov je sestavljen iz oklepaja, seznama izrazov za opis vrednosti, ki so med seboj ločeni z vejicami, in zaklepaja.
+Seznam izrazov za opis vrednosti je lahko prazen.
+**/
+
+value_expression ::= IDENTIFIER:id arguments:a
+		{:
+			AbsValName name = new AbsValName(id);
+			name.setPos(id, idleft, idright);
+			RESULT = new AbsCallExpr(name, a);
+			RESULT.setBeg(id,idleft, idright);
+			RESULT.setEnd(a);
+		:};
+
+arguments ::=		LPARENTHESIS:lp RPARENTHESIS:rp 
+		{:
+			RESULT = new AbsValExprs(); 
+			RESULT.setPos("()", lpleft, lpright);
+		:}
+					| LPARENTHESIS:lp arguments_list:al RPARENTHESIS:rp
+		{:
+			
+			RESULT = al;
+			RESULT.setBeg("(", lpleft, lpright);
+			RESULT.setEnd(")", rpleft, rpright);
+		:};
+
+
+arguments_list ::=	argument:a
+		{:
+			AbsValExprs abxs = new AbsValExprs();
+			abxs.exprs.add(a);
+			RESULT = abxs;
+			RESULT.setPos(a);
+		:}
+					| arguments_list:al COMMA  argument:a
+		{:
+			al.exprs.add(a);
+			RESULT = al;
+			al.setEnd(a);
+		:};
+
+argument ::= 		value_expression:ex
+		{:
+			RESULT = ex;
+		:};
+
+
+/** Dodeljevanje pomnilnika **
+Izraz, ki ga sestavljajo oglati oklepaj, opis tipa in oglati zaklepaj, je izraz za opis vrednosti.
+**/
+
+
+value_expression ::= LBRACKET:lb type_expression:tex RBRACKET:rb
+		{:
+			RESULT = new AbsAlloc(tex);
+			RESULT.setBeg("[", lbleft, lbright);
+			RESULT.setEnd("]", rbleft, rbright);
+		:};
+
+/*
+Izraz za opis vrednosti, ki je obdan z oklepajem in zaklepajem, je izraz za opis vrednosti.
+*/
+
+value_expression ::= LPARENTHESIS:lp value_expression:ex RPARENTHESIS:rp
+		{:
+			RESULT = ex;
+			RESULT.setBeg("(", lpleft, lpright);
+			RESULT.setEnd(")", rpleft, rpright);
+		:};
+
+
+
+/**-------------------------STAVKI-------------------------------------------*/
+/*Izraz za opis vrednosti je stavek.
+Prireditveni stavek je sestavljen iz dveh izrazov za opis vrednosti, ki ju loči simbol :=.
+**/
+
+statement ::=		value_expression:ex
+		{:
+			RESULT = new AbsExprStmt(ex);
+			RESULT.setPos(ex);
+		:}
+
+/*
+Prireditveni stavek je sestavljen iz dveh izrazov za opis vrednosti, ki ju loči simbol :=
+*/
+
+					| value_expression:ex1 ASSIGN value_expression:ex2
+		{:
+			RESULT = new AbsAssignStmt(ex1, ex2);
+			RESULT.setBeg(ex1);
+			RESULT.setEnd(ex2);
+		:};
+
+/** If **
+Pogojni stavek je sestavljen iz ključne besede if, izraza za opis vrednosti, ključne besede then, stavka, ključne besede else in stavka.
+Ključna beseda else in drugi stavek sta lahko izpuščena. Če sta ključna beseda else in drugi stavek prisotna,
+vedno sodita k začetku najbližjega predhodnega pogojnega stavka.
+**/
+
+statement ::= 		IF:f value_expression:cond THEN statement:thn ELSE statement:els
+		{:
+			RESULT = new AbsIfStmt(cond, thn, els);
+			RESULT.setBeg("if", fleft, fright);
+			RESULT.setEnd(els);
+		:}
+					| IF:f value_expression:cond THEN statement:thn
+		{:
+			AbsBlockStmt empty = new AbsBlockStmt(new AbsStmts()); 
+			empty.setPos(thn);
+			RESULT = new AbsIfStmt(cond, thn, empty);
+			RESULT.setBeg("if", fleft, fright);
+			RESULT.setEnd(thn);
+		:}
+					| value_expression:cond QUEST statement:thn COLON statement:els
+		{:
+			RESULT = new AbsIfStmt(cond, thn, els, true);
+			RESULT.setBeg("?",condleft, condright);
+			RESULT.setEnd(els);
+		:};
+
+/** While **
+Zanka, ki je sestavljena iz ključne besede while, izraza za opis vrednosti, ključne besede do in stavka, je stavek.
+**/
+
+statement ::= 		WHILE:wh value_expression:ex DO statement:st
+		{:
+			RESULT = new AbsWhileStmt(ex, st);
+			RESULT.setBeg("while", whleft, whright);
+			RESULT.setEnd(st);
+		:};
+
+
+/** For **
+Zanka, ki je sestavljena iz ključne besede for, imena, simbola za prirejanje, izraza za opis vrednosti, ključne besede to,
+izraza za opis vrednosti, ključne besede do in stavka, je stavek.
+**/
+
+
+statement ::=		FOR:f IDENTIFIER:id ASSIGN value_expression:ex1 TO value_expression:ex2 DO statement:st
+		{:
+			AbsValName name = new AbsValName(id);
+			name.setPos(id, idleft, idright);
+			RESULT = new AbsForStmt(name, ex1, ex2, st);
+			RESULT.setBeg("for", fleft, fright);
+			RESULT.setEnd(st);
+		:};		
+
+
+/** Sestavljeni stavki **
+Sestavljeni stavek je sestavljen iz ključne besede begin, morebiti praznega zaporedja stavkov,
+ki so med seboj ločeni s podpičji, in ključne besede end.
+**/
+
+statement ::=		block:bl
+		{:
+			RESULT = new AbsBlockStmt(bl);
+			RESULT.setPos(bl);
+		:};
+
+block ::=			BEGIN:be END:en
+		{:
+			RESULT = new AbsStmts();
+			RESULT.setBeg("begin", beleft, beright);
+			RESULT.setEnd("end", enleft, enright);
+		:}
+					| BEGIN:be statements:st END:en
+		{:
+			RESULT = st;
+			RESULT.setBeg("begin", beleft, beright);
+			RESULT.setEnd("end", enleft, enright);
+		:};
+
+statements ::=		statement:s
+		{:
+			AbsStmts l = new AbsStmts(); 
+			l.stmts.add(s); 
+			RESULT = l; 
+			l.setPos(s);
+		:}
+					| statements:l SEMIC statement:s
+		{:
+			l.stmts.add(s);
+			RESULT = l;
+			l.setEnd(s); 
+		:};
+		
+
+
+constant  ::= error        {: RESULT = new AbsConstDecl(null, null); RESULT.error = true; :};
+type      ::= error        {: RESULT = new AbsTypeDecl(null, null);  RESULT.error = true; :};
+var       ::= error        {: RESULT = new AbsVarDecl(null, null);   RESULT.error = true; :};
+parameter ::= error        {: RESULT = new AbsTypeDecl(null, null);  RESULT.error = true; :};
+argument  ::= error        {: RESULT = new AbsValName(null);         RESULT.error = true; :};
+statement ::= error        {: RESULT = new AbsExprStmt(null);        RESULT.error = true; :};
